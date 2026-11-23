@@ -1,6 +1,7 @@
 import { Bot, type Context } from 'grammy';
 import type { AppConfig } from '../config.js';
-import { parseRupiahAmount, parseSeaBankEmail } from '../parser/seabankParser.js';
+import { parseFlexibleRupiah, parseQuickTextMessage } from '../parser/quickTextParser.js';
+import { parseSeaBankEmail } from '../parser/seabankParser.js';
 import type { FinanceService } from '../services/financeService.js';
 import {
   formatDailyRecapMessage,
@@ -69,12 +70,17 @@ export class TelegramFinanceBot {
       const lines = [
         '👋 Halo! Ini adalah Bot Rekap & Notifikasi Keuangan SeaBank.',
         '',
+        '⚡ Ketik Cepat (langsung chat tanpa slash):',
+        '-25k kopi  (atau -25000 kopi / keluar 25rb kopi)',
+        '+500k gaji  (atau +1.5jt bonus / masuk 100rb cashback)',
+        'Bisa kirim banyak baris sekaligus dalam 1 chat!',
+        '',
         '📌 Daftar Perintah:',
         '/rekap atau /hariini — Rekap uang masuk, keluar, selisih & saldo hari ini',
         '/rekap YYYY-MM-DD — Rekap tanggal tertentu (contoh: /rekap 2026-11-22)',
         '/bulan — Rekap total bulan ini',
         '/saldo — Lihat jumlah uang sekarang',
-        '/setsaldo <nominal> — Sinkronkan saldo awal/sekarang (contoh: /setsaldo 1500000)',
+        '/setsaldo <nominal> — Sinkronkan saldo awal/sekarang (contoh: /setsaldo 1.5jt)',
         '/riwayat [jumlah] — Lihat transaksi terakhir (default 10)',
         '/masuk <nominal> [ket] — Catat uang masuk manual',
         '/keluar <nominal> [ket] — Catat uang keluar manual',
@@ -144,11 +150,11 @@ export class TelegramFinanceBot {
       if (/^0+$/.test(rawArg.replace(/[.,\s]/g, ''))) {
         parsed = 0;
       } else {
-        parsed = parseRupiahAmount(rawArg);
+        parsed = parseFlexibleRupiah(rawArg);
       }
 
       if (parsed === null) {
-        await ctx.reply('❌ Nominal tidak valid. Contoh: /setsaldo 1500000');
+        await ctx.reply('❌ Nominal tidak valid. Contoh: /setsaldo 1500000 atau /setsaldo 1.5jt');
         return;
       }
 
@@ -182,9 +188,11 @@ export class TelegramFinanceBot {
       const description =
         parts.slice(1).join(' ').trim() || (type === 'income' ? 'Pemasukan Manual' : 'Pengeluaran Manual');
 
-      const amount = parseRupiahAmount(amountToken);
+      const amount = parseFlexibleRupiah(amountToken);
       if (amount === null) {
-        await ctx.reply('❌ Nominal tidak valid. Pastikan angka berada di kata pertama, contoh: /keluar 25000 Kopi');
+        await ctx.reply(
+          '❌ Nominal tidak valid. Contoh: /keluar 25000 Kopi atau /keluar 25k Kopi'
+        );
         return;
       }
 
@@ -328,6 +336,67 @@ export class TelegramFinanceBot {
           `• Saldo di Email: ${tx.balanceAfter !== null ? formatRupiah(tx.balanceAfter) : '(tidak ada, hitung otomatis)'}`,
         ].join('\n')
       );
+    });
+
+    // Handler Ketik Cepat (chat biasa tanpa slash, mendukung 1 baris atau multi-baris sekaligus)
+    this.bot.on('message:text', async (ctx) => {
+      const text = ctx.message.text.trim();
+      if (!text || text.startsWith('/')) {
+        return;
+      }
+
+      const { drafts, invalidLines } = parseQuickTextMessage(text);
+
+      if (drafts.length === 0) {
+        await ctx.reply(
+          [
+            '💡 Gunakan format Ketik Cepat untuk mencatat langsung:',
+            '• -25k kopi  (atau -25000 kopi / keluar 25rb kopi)',
+            '• +500k gaji  (atau +1.5jt bonus / masuk 100rb cashback)',
+            '',
+            'Atau kirim /help untuk melihat semua perintah.',
+          ].join('\n')
+        );
+        return;
+      }
+
+      const recorded: Transaction[] = [];
+      for (const draft of drafts) {
+        const { transaction } = this.financeService.recordTransaction({
+          type: draft.type,
+          amount: draft.amount,
+          description: draft.description,
+          source: 'manual',
+        });
+        recorded.push(transaction);
+      }
+
+      // Jika hanya 1 transaksi & tidak ada baris gagal, gunakan format notifikasi transaksi ringkas
+      if (recorded.length === 1 && invalidLines.length === 0) {
+        await ctx.reply(formatTransactionNotification(recorded[0], this.config.timezone));
+        return;
+      }
+
+      const latestBalance = this.financeService.getCurrentBalance();
+      const lines = [`✅ ${recorded.length} Transaksi Tercatat:`, ''];
+
+      for (const tx of recorded) {
+        const icon = tx.type === 'income' ? '💰' : '💸';
+        const sign = tx.type === 'income' ? '+' : '-';
+        lines.push(`${icon} #${tx.id} | ${sign}${formatRupiah(tx.amount)} — ${tx.description}`);
+      }
+
+      lines.push('', `-> Jumlah uang sekarang: ${formatRupiah(latestBalance)}`);
+
+      if (invalidLines.length > 0) {
+        lines.push(
+          '',
+          `⚠️ ${invalidLines.length} baris dilewati (format tidak dikenali):`,
+          ...invalidLines.slice(0, 5).map((l) => `• ${l}`)
+        );
+      }
+
+      await ctx.reply(lines.join('\n'));
     });
   }
 

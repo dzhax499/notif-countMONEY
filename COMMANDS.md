@@ -6,6 +6,25 @@ Dokumentasi ini berisi **seluruh perintah** yang tersedia pada bot Telegram penc
 
 ## ⚡ Ringkasan Cepat
 
+### Ketik Cepat (Tanpa Slash `/`)
+Cukup kirim chat biasa langsung ke bot — mendukung singkatan `k`, `rb`, `ribu`, `jt`, `juta` serta **multi-baris sekaligus**:
+```text
+-25k kopi kenangan
++500k gaji freelance
+keluar 15rb parkir
+beli 30k makan siang
+masuk 1.5jt proyek
+```
+
+**Contoh Multi-Baris Sekaligus (1 Chat):**
+```text
+-15k parkir
+-35k makan siang
++200k transfer budi
+```
+
+### Perintah Slash (`/`)
+
 | Perintah | Alias | Fungsi Singkat |
 |---|---|---|
 | `/start` | `/help` | Menampilkan daftar perintah & Chat ID (jika belum dikonfigurasi) |
@@ -21,7 +40,7 @@ Dokumentasi ini berisi **seluruh perintah** yang tersedia pada bot Telegram penc
 | `/status` | — | Menampilkan status koneksi Gmail, sync terakhir, jadwal rekap & saldo |
 | `/simulasi <subject> \| <isi>` | — | Menguji parser email SeaBank tanpa mengubah saldo/database |
 
-> **Catatan Format Nominal:** Pada perintah `/setsaldo`, `/masuk`, dan `/keluar`, nominal boleh ditulis polos (`1500000`), bertitik (`1.500.000`), atau dengan prefix (`Rp150000`).
+> **Catatan Format Nominal:** Pada Ketik Cepat maupun perintah `/setsaldo`, `/masuk`, dan `/keluar`, nominal boleh ditulis polos (`1500000`), bertitik (`1.500.000`), dengan prefix (`Rp150000`), atau singkatan (`25k`, `25.5k`, `15rb`, `1.5jt`).
 
 ---
 

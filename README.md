@@ -2,6 +2,7 @@
 
 Bot Telegram berbasis **Node.js (TypeScript) + SQLite** yang terhubung otomatis ke **email notifikasi SeaBank di Gmail** (via IMAP) untuk:
 - Mendeteksi uang masuk & uang keluar SeaBank secara otomatis (Transfer Masuk/Keluar, QRIS, Bunga Harian, Top-Up E-Wallet, dll) tanpa aplikasi tambahan di HP.
+- **Ketik Cepat** langsung di chat Telegram tanpa slash (misal `-25k kopi`, `+500k gaji`, `beli 30rb makan`, termasuk **multi-baris sekaligus**).
 - Mengirim notifikasi **real-time** ringkas ke Telegram setiap ada transaksi baru.
 - Mengirim **rekap harian otomatis** setiap tengah malam (default jam `00:00 WIB`, merekap 24 jam penuh hari yang baru selesai) atau kapan saja lewat `/rekap`.
 - Menyimpan riwayat transaksi & saldo saat ini secara permanen di database **SQLite** (built-in `node:sqlite`) dengan sistem anti-duplikat.
