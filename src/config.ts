@@ -59,7 +59,7 @@ export function loadConfig(): AppConfig {
     gmailAppPassword,
     imapHost: (process.env.IMAP_HOST ?? 'imap.gmail.com').trim(),
     imapPort: parsePositiveInt(process.env.IMAP_PORT, 993),
-    emailPollIntervalSeconds: Math.max(15, parsePositiveInt(process.env.EMAIL_POLL_INTERVAL_SECONDS, 60)),
+    emailPollIntervalSeconds: Math.max(60, parsePositiveInt(process.env.EMAIL_POLL_INTERVAL_SECONDS, 180)),
     seabankSenderFilters: seabankSenderFilters.length > 0 ? seabankSenderFilters : ['seabank.co.id', 'seabank'],
     emailLookbackDays: parseNonNegativeInt(process.env.EMAIL_LOOKBACK_DAYS, 1),
     notifyUnparsedEmail: (process.env.NOTIFY_UNPARSED_EMAIL ?? 'true').toLowerCase() !== 'false',

@@ -20,6 +20,8 @@ export class GmailWatcher {
   private isSyncing = false;
   private lastSyncAt: Date | null = null;
   private lastError: string | null = null;
+  private consecutiveErrors = 0;
+  private backoffUntil = 0;
 
   constructor(
     private readonly config: AppConfig,
@@ -52,7 +54,7 @@ export class GmailWatcher {
   start(): void {
     if (!this.isConfigured()) {
       console.warn(
-        '[GmailWatcher] GMAIL_USER atau GMAIL_APP_PASSWORD belum diisi di .env. Polling email tidak aktif (mode manual tetap berjalan).'
+        '[GmailWatcher] GMAIL_USER atau GMAIL_APP_PASSWORD belum diisi di .env. Polling email tidak aktif (mode ketik cepat & manual tetap berjalan).'
       );
       return;
     }
@@ -63,15 +65,27 @@ export class GmailWatcher {
       `[GmailWatcher] Aktif! Mengecek email SeaBank di ${this.config.gmailUser} setiap ${this.config.emailPollIntervalSeconds} detik.`
     );
 
+    const runScheduledSync = async (label: string) => {
+      if (Date.now() < this.backoffUntil) {
+        return;
+      }
+      try {
+        await this.syncNow();
+      } catch (err) {
+        const msg = this.formatImapError(err);
+        const cooldownMin = Math.min(15, this.consecutiveErrors * 5);
+        this.backoffUntil = Date.now() + cooldownMin * 60 * 1000;
+        console.error(
+          `[GmailWatcher] ${label} gagal: ${msg} (jeda ${cooldownMin} menit sebelum mencoba lagi)`
+        );
+      }
+    };
+
     // Jalankan sync pertama kali saat startup
-    void this.syncNow().catch((err) => {
-      console.error('[GmailWatcher] Sync awal gagal:', err);
-    });
+    void runScheduledSync('Sync awal');
 
     this.timer = setInterval(() => {
-      void this.syncNow().catch((err) => {
-        console.error('[GmailWatcher] Sync berkala gagal:', err);
-      });
+      void runScheduledSync('Sync berkala');
     }, this.config.emailPollIntervalSeconds * 1000);
   }
 
@@ -80,6 +94,16 @@ export class GmailWatcher {
       clearInterval(this.timer);
       this.timer = null;
     }
+  }
+
+  private formatImapError(error: unknown): string {
+    if (error && typeof error === 'object') {
+      const e = error as { responseText?: string; response?: string; message?: string };
+      if (e.responseText) return e.responseText;
+      if (e.response) return e.response;
+      if (e.message) return e.message;
+    }
+    return String(error);
   }
 
   async syncNow(): Promise<SyncResult> {
@@ -112,7 +136,15 @@ export class GmailWatcher {
         user: this.config.gmailUser!,
         pass: this.config.gmailAppPassword!,
       },
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 30_000,
       logger: false,
+    });
+
+    // Hindari unhandled 'error' event dari socket ImapFlow
+    client.on('error', () => {
+      // Error sudah ditangani di blok catch utama
     });
 
     try {
@@ -131,6 +163,8 @@ export class GmailWatcher {
         if (!uids || uids.length === 0) {
           this.lastSyncAt = new Date();
           this.lastError = null;
+          this.consecutiveErrors = 0;
+          this.backoffUntil = 0;
           return result;
         }
 
@@ -164,6 +198,8 @@ export class GmailWatcher {
         if (candidateUids.length === 0) {
           this.lastSyncAt = new Date();
           this.lastError = null;
+          this.consecutiveErrors = 0;
+          this.backoffUntil = 0;
           return result;
         }
 
@@ -243,20 +279,28 @@ export class GmailWatcher {
         lock.release();
       }
 
-      await client.logout();
       this.lastSyncAt = new Date();
       this.lastError = null;
+      this.consecutiveErrors = 0;
+      this.backoffUntil = 0;
       return result;
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      this.lastError = errMsg;
+      this.consecutiveErrors += 1;
+      this.lastError = this.formatImapError(error);
+      throw error;
+    } finally {
+      try {
+        if (client.usable) {
+          await client.logout();
+        }
+      } catch {
+        // Abaikan error saat logout
+      }
       try {
         client.close();
       } catch {
         // Abaikan error saat force close
       }
-      throw error;
-    } finally {
       this.isSyncing = false;
     }
   }
