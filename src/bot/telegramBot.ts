@@ -4,6 +4,7 @@ import { parseFlexibleRupiah, parseQuickTextMessage } from '../parser/quickTextP
 import { parseSeaBankEmail } from '../parser/seabankParser.js';
 import type { FinanceService } from '../services/financeService.js';
 import {
+  findBalanceSpoilerEntities,
   formatDailyRecapMessage,
   formatHistoryMessage,
   formatMonthlyRecapMessage,
@@ -30,6 +31,18 @@ export class TelegramFinanceBot {
 
   attachGmailWatcher(watcher: GmailWatcher): void {
     this.gmailWatcher = watcher;
+  }
+
+  /**
+   * Mengirim balasan dengan efek Spoiler (blur) otomatis pada nominal "Jumlah uang sekarang".
+   */
+  private async replyWithSpoiler(ctx: Context, text: string): Promise<void> {
+    const entities = findBalanceSpoilerEntities(text);
+    if (entities.length > 0) {
+      await ctx.reply(text, { entities });
+      return;
+    }
+    await ctx.reply(text);
   }
 
   private registerMiddleware(): void {
@@ -116,7 +129,7 @@ export class TelegramFinanceBot {
 
       const targetDate = arg || todayKey;
       const summary = this.financeService.getDailySummary(targetDate);
-      await ctx.reply(formatDailyRecapMessage(summary, targetDate === todayKey));
+      await this.replyWithSpoiler(ctx, formatDailyRecapMessage(summary, targetDate === todayKey));
     };
 
     this.bot.command('rekap', handleRecap);
@@ -129,12 +142,13 @@ export class TelegramFinanceBot {
         return;
       }
       const summary = this.financeService.getMonthlySummary(arg || undefined);
-      await ctx.reply(formatMonthlyRecapMessage(summary));
+      await this.replyWithSpoiler(ctx, formatMonthlyRecapMessage(summary));
     });
 
     this.bot.command('saldo', async (ctx) => {
       const balance = this.financeService.getCurrentBalance();
-      await ctx.reply(
+      await this.replyWithSpoiler(
+        ctx,
         `💳 Jumlah uang sekarang: ${formatRupiah(balance)}\n\nTip: Gunakan /setsaldo <nominal> untuk menyinkronkan dengan saldo SeaBank Anda.`
       );
     });
@@ -160,7 +174,7 @@ export class TelegramFinanceBot {
       }
 
       const updated = this.financeService.setCurrentBalance(parsed);
-      await ctx.reply(`✅ Saldo sekarang berhasil diperbarui menjadi ${formatRupiah(updated)}`);
+      await this.replyWithSpoiler(ctx, `✅ Saldo sekarang berhasil diperbarui menjadi ${formatRupiah(updated)}`);
     });
 
     this.bot.command('riwayat', async (ctx) => {
@@ -172,7 +186,7 @@ export class TelegramFinanceBot {
       }
 
       const txs = this.financeService.getRecentTransactions(Math.min(limit, 30));
-      await ctx.reply(formatHistoryMessage(txs, this.config.timezone));
+      await this.replyWithSpoiler(ctx, formatHistoryMessage(txs, this.config.timezone));
     });
 
     const handleManualTx = async (ctx: Context, type: 'income' | 'expense') => {
@@ -204,7 +218,7 @@ export class TelegramFinanceBot {
         source: 'manual',
       });
 
-      await ctx.reply(formatTransactionNotification(transaction, this.config.timezone));
+      await this.replyWithSpoiler(ctx, formatTransactionNotification(transaction, this.config.timezone));
     };
 
     this.bot.command('masuk', (ctx) => handleManualTx(ctx, 'income'));
@@ -225,7 +239,8 @@ export class TelegramFinanceBot {
       }
 
       const sign = result.deleted.type === 'income' ? '+' : '-';
-      await ctx.reply(
+      await this.replyWithSpoiler(
+        ctx,
         [
           `🗑️ Transaksi #${result.deleted.id} berhasil dihapus:`,
           `${sign}${formatRupiah(result.deleted.amount)} — ${result.deleted.description}`,
@@ -300,7 +315,7 @@ export class TelegramFinanceBot {
         lines.push(`• Error Gmail Terakhir: ${watcherStatus.lastError}`);
       }
 
-      await ctx.reply(lines.join('\n'));
+      await this.replyWithSpoiler(ctx, lines.join('\n'));
     });
 
     const buildSourcePanel = (settings: NotificationSourceSettings) => {
@@ -483,7 +498,7 @@ export class TelegramFinanceBot {
 
       // Jika hanya 1 transaksi & tidak ada baris gagal, gunakan format notifikasi transaksi ringkas
       if (recorded.length === 1 && invalidLines.length === 0) {
-        await ctx.reply(formatTransactionNotification(recorded[0], this.config.timezone));
+        await this.replyWithSpoiler(ctx, formatTransactionNotification(recorded[0], this.config.timezone));
         return;
       }
 
@@ -506,7 +521,7 @@ export class TelegramFinanceBot {
         );
       }
 
-      await ctx.reply(lines.join('\n'));
+      await this.replyWithSpoiler(ctx, lines.join('\n'));
     });
   }
 
@@ -519,6 +534,11 @@ export class TelegramFinanceBot {
   async sendMessageToOwner(text: string): Promise<void> {
     if (!this.config.telegramChatId) {
       console.warn('[TelegramBot] Pesan tidak dikirim karena TELEGRAM_CHAT_ID belum diset.');
+      return;
+    }
+    const entities = findBalanceSpoilerEntities(text);
+    if (entities.length > 0) {
+      await this.bot.api.sendMessage(this.config.telegramChatId, text, { entities });
       return;
     }
     await this.bot.api.sendMessage(this.config.telegramChatId, text);

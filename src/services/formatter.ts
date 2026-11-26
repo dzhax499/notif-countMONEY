@@ -215,3 +215,36 @@ export function formatHistoryMessage(transactions: Transaction[], timezone = 'As
   lines.push('', 'Tip: Gunakan /hapus <id> jika ingin menghapus transaksi tertentu.');
   return lines.join('\n');
 }
+
+/**
+ * Mencari posisi nominal "Jumlah uang sekarang" / "Saldo" di dalam teks pesan
+ * untuk dijadikan Telegram Spoiler Entity (hidden/blur sampai diklik di Telegram)
+ * tanpa perlu mengubah teks asli atau risiko gagal escape Markdown/HTML.
+ */
+export function findBalanceSpoilerEntities(text: string): Array<{
+  type: 'spoiler';
+  offset: number;
+  length: number;
+}> {
+  const entities: Array<{ type: 'spoiler'; offset: number; length: number }> = [];
+  const regex =
+    /(?:jumlah\s+uang\s+sekarang(?:\s+disesuaikan\s+menjadi)?\s*:|saldo\s+sekarang\s+berhasil\s+diperbarui\s+menjadi|•\s*saldo\s*:)\s*(-?Rp\s*[0-9.]+)/gi;
+
+  for (const match of text.matchAll(regex)) {
+    const fullMatch = match[0];
+    const amountPart = match[1];
+    const matchIndex = match.index;
+    if (matchIndex !== undefined && amountPart) {
+      const amountOffsetInMatch = fullMatch.lastIndexOf(amountPart);
+      if (amountOffsetInMatch !== -1) {
+        entities.push({
+          type: 'spoiler',
+          offset: matchIndex + amountOffsetInMatch,
+          length: amountPart.length,
+        });
+      }
+    }
+  }
+
+  return entities;
+}

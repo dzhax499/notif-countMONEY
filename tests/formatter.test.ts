@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  findBalanceSpoilerEntities,
   formatDailyRecapMessage,
   formatRecapCoreBody,
   formatTransactionNotification,
@@ -78,5 +79,16 @@ describe('formatter', () => {
     assert.match(text, /-> Jumlah uang sekarang: Rp 1\.565\.000/);
     assert.doesNotMatch(text, /Ringkasan Hari Ini/);
     assert.doesNotMatch(text, /Ingat hemat!/);
+
+    const spoilerEntities = findBalanceSpoilerEntities(text);
+    assert.equal(spoilerEntities.length, 1);
+    assert.equal(spoilerEntities[0].type, 'spoiler');
+    assert.equal(
+      text.slice(
+        spoilerEntities[0].offset,
+        spoilerEntities[0].offset + spoilerEntities[0].length
+      ),
+      'Rp 1.565.000'
+    );
   });
 });
