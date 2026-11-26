@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parseRupiahAmount, parseSeaBankEmail } from '../src/parser/seabankParser.js';
+import {
+  parseRupiahAmount,
+  parseSeaBankEmail,
+  parseSeaBankPushNotification,
+} from '../src/parser/seabankParser.js';
 
 describe('parseRupiahAmount', () => {
   it('parses Indonesian dot-separated formats and decimals', () => {
@@ -147,5 +151,24 @@ describe('parseSeaBankEmail', () => {
     });
     assert.equal(other.matched, false);
     assert.equal(other.isSeaBankEmail, false);
+  });
+
+  it('parses short Android push notifications from SeaBank via MacroDroid', () => {
+    const qrisNotif = parseSeaBankPushNotification({
+      title: 'SeaBank',
+      text: 'Pembayaran QRIS sebesar Rp 12.500 di INDOMARET berhasil.',
+    });
+    assert.equal(qrisNotif.matched, true);
+    assert.equal(qrisNotif.transaction?.type, 'expense');
+    assert.equal(qrisNotif.transaction?.amount, 12500);
+    assert.equal(qrisNotif.transaction?.description, 'Pembayaran QRIS Berhasil (ke INDOMARET)');
+
+    const incomingNotif = parseSeaBankPushNotification({
+      title: 'SeaBank',
+      text: 'Rekeningmu bertambah Rp 45.000 dari DANA - RINA.',
+    });
+    assert.equal(incomingNotif.matched, true);
+    assert.equal(incomingNotif.transaction?.type, 'income');
+    assert.equal(incomingNotif.transaction?.amount, 45000);
   });
 });

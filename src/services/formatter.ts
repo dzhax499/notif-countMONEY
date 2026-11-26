@@ -149,7 +149,12 @@ export function formatTransactionNotification(
   const signedAmount = isIncome
     ? `+${formatRupiah(tx.amount)}`
     : `-${formatRupiah(tx.amount)}`;
-  const sourceLabel = tx.source === 'manual' ? 'Manual' : 'Email SeaBank';
+  const sourceLabel =
+    tx.source === 'manual'
+      ? 'Manual'
+      : tx.source === 'macrodroid'
+        ? 'Notif HP (MacroDroid)'
+        : 'Email SeaBank';
 
   const lines = [
     header,

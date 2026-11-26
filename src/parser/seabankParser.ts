@@ -107,6 +107,10 @@ const INCOME_PATTERNS: RegExp[] = [
   /top[\s-]*up\s+(saldo\s+)?seabank\s+berhasil/i,
   /isi\s+saldo\s+seabank\s+berhasil/i,
   /setor\s+tunai/i,
+  /rekening(?:mu| anda)?\s+bertambah/i,
+  /saldo(?:mu| anda)?\s+bertambah/i,
+  /berhasil\s+diterima/i,
+  /dikreditkan\s+ke\s+rekening/i,
 ];
 
 const EXPENSE_PATTERNS: RegExp[] = [
@@ -118,19 +122,21 @@ const EXPENSE_PATTERNS: RegExp[] = [
   /dana\s+keluar/i,
   /outgoing\s+transfer/i,
   /top[\s-]*up\s+(e-?wallet|gopay|ovo|dana|shopeepay|linkaja|flazz|e-?money)/i,
-  /pembayaran\s+(berhasil|tagihan|virtual\s+account|va|merchant|shopee)/i,
+  /pembayaran\s+(berhasil|tagihan|virtual\s+account|va|merchant|shopee|sebesar|rp)/i,
   /pembelian\s+(berhasil|pulsa|paket\s+data|token|listrik)/i,
-  /bayar\s+(tagihan|merchant|belanja)/i,
+  /bayar\s+(tagihan|merchant|belanja|qris)/i,
   /payment\s+successful/i,
   /tarik\s+tunai/i,
   /debit\s+(transaksi|otomatis|berhasil|notification)/i,
   /biaya\s+(admin|bulanan|materai)/i,
   /penempatan\s+deposito/i,
-  /transfer\s+(dana\s+)?berhasil/i,
+  /transfer\s+(dana\s+|sebesar\s+|rp\.?\s*)?berhasil/i,
   /bukti\s+transfer/i,
   /transaksi\s+berhasil/i,
-  /kamu\s+telah\s+(melakukan\s+)?(transfer|pembayaran|transaksi)/i,
+  /kamu\s+telah\s+(melakukan\s+)?(transfer|pembayaran|transaksi|membayar)/i,
   /telah\s+dikirim\s+ke/i,
+  /berhasil\s+dikirim\s+ke/i,
+  /berhasil\s+dibayar\s+ke/i,
 ];
 
 function detectTransactionType(subject: string, body: string): TransactionType | null {
@@ -263,15 +269,35 @@ function extractReference(body: string): string | null {
   return null;
 }
 
-function buildDescription(subject: string, type: TransactionType, counterparty: string | null): string {
+function buildDescription(
+  subject: string,
+  type: TransactionType,
+  counterparty: string | null,
+  bodyText = ''
+): string {
   const cleanSubject = subject
     .replace(/^(?:re|fwd?)\s*:\s*/i, '')
     .replace(/\[?seabank\]?\s*[-:|]?\s*/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 
+  let inferredTitle = '';
+  if (!cleanSubject && bodyText) {
+    if (/\bqris\b/i.test(bodyText)) {
+      inferredTitle = 'Pembayaran QRIS Berhasil';
+    } else if (/bunga\s+(harian|tabungan|deposito)|pembayaran\s+bunga/i.test(bodyText)) {
+      inferredTitle = 'Bunga Tabungan SeaBank';
+    } else if (/top[\s-]*up/i.test(bodyText)) {
+      inferredTitle = type === 'income' ? 'Top-Up Saldo SeaBank' : 'Top-Up E-Wallet';
+    } else if (/transfer/i.test(bodyText)) {
+      inferredTitle = type === 'income' ? 'Transfer Masuk SeaBank' : 'Transfer Keluar SeaBank';
+    }
+  }
+
   const baseTitle =
-    cleanSubject || (type === 'income' ? 'Dana Masuk SeaBank' : 'Transaksi Keluar SeaBank');
+    cleanSubject ||
+    inferredTitle ||
+    (type === 'income' ? 'Dana Masuk SeaBank' : 'Transaksi Keluar SeaBank');
 
   if (counterparty && !baseTitle.toLowerCase().includes(counterparty.toLowerCase())) {
     const preposition = type === 'income' ? 'dari' : 'ke';
@@ -279,6 +305,42 @@ function buildDescription(subject: string, type: TransactionType, counterparty: 
   }
 
   return baseTitle;
+}
+
+/**
+ * Mem-parse Push Notification SeaBank dari HP Android (MacroDroid) atau teks Struk OCR.
+ */
+export function parseSeaBankPushNotification(input: {
+  title?: string;
+  text: string;
+  bigText?: string;
+  date?: Date;
+}): ParseResult {
+  const rawTitle = (input.title ?? '').trim();
+  const mainText = (input.bigText?.trim() || input.text?.trim() || '').trim();
+
+  if (!rawTitle && !mainText) {
+    return {
+      matched: false,
+      isSeaBankEmail: false,
+      reason: 'Isi notifikasi kosong',
+    };
+  }
+
+  // Jika title dari Android hanya "SeaBank", gunakan ringkasan dari body sebagai subject bila pendek
+  const effectiveSubject =
+    rawTitle && !/^seabank(\s+indonesia)?$/i.test(rawTitle) ? rawTitle : '';
+
+  return parseSeaBankEmail(
+    {
+      messageId: `macrodroid-${Date.now()}`,
+      from: 'SeaBank Push Notification <alerts@seabank.co.id>',
+      subject: effectiveSubject,
+      text: mainText || rawTitle,
+      date: input.date ?? new Date(),
+    },
+    ['seabank.co.id', 'seabank']
+  );
 }
 
 export function isFromSeaBank(from: string, subject: string, senderFilters: string[]): boolean {
@@ -358,7 +420,7 @@ export function parseSeaBankEmail(
   const counterparty = extractCounterparty(textBody, type);
   const reference = extractReference(textBody);
   const balanceAfter = extractBalanceAfter(textBody);
-  const description = buildDescription(email.subject, type, counterparty);
+  const description = buildDescription(email.subject, type, counterparty, textBody);
 
   return {
     matched: true,

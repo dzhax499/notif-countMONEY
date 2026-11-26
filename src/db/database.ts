@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { Transaction, TransactionSource, TransactionType } from '../types.js';
+import type {
+  NotificationSourceSettings,
+  Transaction,
+  TransactionSource,
+  TransactionType,
+} from '../types.js';
 
 interface TransactionRow {
   id: number;
@@ -83,6 +88,14 @@ export class FinanceDatabase {
     if (existingBalance === null) {
       this.setSetting('current_balance', '0');
     }
+
+    // Default toggle sumber notifikasi (keduanya ON secara default, bisa diubah lewat tombol Telegram /sumber)
+    if (this.getSetting('gmail_enabled') === null) {
+      this.setSetting('gmail_enabled', 'true');
+    }
+    if (this.getSetting('macrodroid_enabled') === null) {
+      this.setSetting('macrodroid_enabled', 'true');
+    }
   }
 
   close(): void {
@@ -139,6 +152,57 @@ export class FinanceDatabase {
   hasTransactionByReference(reference: string): boolean {
     const stmt = this.db.prepare('SELECT 1 FROM transactions WHERE reference = ?');
     return Boolean(stmt.get(reference));
+  }
+
+  /**
+   * Mengecek apakah baru saja ada transaksi otomatis dari sumber lain (misal MacroDroid vs Email Gmail)
+   * dengan jenis (income/expense) dan nominal yang sama persis dalam rentang waktu tertentu.
+   */
+  hasRecentCrossSourceDuplicate(params: {
+    type: TransactionType;
+    amount: number;
+    incomingSource: TransactionSource;
+    windowSeconds?: number;
+  }): boolean {
+    if (params.incomingSource === 'manual') {
+      return false;
+    }
+
+    const windowSec = params.windowSeconds ?? 300; // Default 5 menit
+    const cutoffIso = new Date(Date.now() - windowSec * 1000).toISOString();
+
+    const stmt = this.db.prepare(`
+      SELECT 1 FROM transactions
+      WHERE type = ?
+        AND amount = ?
+        AND source != 'manual'
+        AND source != ?
+        AND occurred_at >= ?
+      LIMIT 1
+    `);
+
+    return Boolean(
+      stmt.get(params.type, Math.round(params.amount), params.incomingSource, cutoffIso)
+    );
+  }
+
+  getSourceSettings(): NotificationSourceSettings {
+    const gmailRaw = this.getSetting('gmail_enabled');
+    const macrodroidRaw = this.getSetting('macrodroid_enabled');
+    return {
+      gmailEnabled: gmailRaw === null ? true : gmailRaw === 'true',
+      macrodroidEnabled: macrodroidRaw === null ? true : macrodroidRaw === 'true',
+    };
+  }
+
+  setGmailEnabled(enabled: boolean): NotificationSourceSettings {
+    this.setSetting('gmail_enabled', enabled ? 'true' : 'false');
+    return this.getSourceSettings();
+  }
+
+  setMacrodroidEnabled(enabled: boolean): NotificationSourceSettings {
+    this.setSetting('macrodroid_enabled', enabled ? 'true' : 'false');
+    return this.getSourceSettings();
   }
 
   insertTransaction(params: {

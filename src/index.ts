@@ -5,6 +5,7 @@ import { FinanceDatabase } from './db/database.js';
 import { FinanceService } from './services/financeService.js';
 import { GmailWatcher } from './services/gmailWatcher.js';
 import { DailyRecapScheduler } from './services/scheduler.js';
+import { extractMacroDroidPayload, processMacroDroidWebhook } from './services/webhookHandler.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -35,28 +36,73 @@ async function main(): Promise<void> {
     await telegramBot.sendDailyRecap();
   });
 
-  // Mini HTTP healthcheck server agar kompatibel jika di-deploy sebagai Web Service (Render/Railway/Fly.io)
-  const healthServer = http.createServer((req, res) => {
-    if (req.url === '/' || req.url === '/health') {
-      const status = gmailWatcher.getStatus();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          status: 'ok',
-          service: 'notif-countMONEY',
-          gmailConfigured: status.configured,
-          lastSyncAt: status.lastSyncAt?.toISOString() ?? null,
-          totalTransactions: financeService.getTotalTransactionCount(),
-        })
-      );
-      return;
+  // HTTP server untuk Healthcheck & Webhook MacroDroid (/webhook/macrodroid atau /webhook/notif)
+  const healthServer = http.createServer(async (req, res) => {
+    try {
+      const urlObj = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const pathname = urlObj.pathname.replace(/\/+$/, '') || '/';
+
+      if (pathname === '/' || pathname === '/health') {
+        const status = gmailWatcher.getStatus();
+        const sourceSettings = financeService.getSourceSettings();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(
+          JSON.stringify({
+            status: 'ok',
+            service: 'notif-countMONEY',
+            sources: {
+              macrodroidEnabled: sourceSettings.macrodroidEnabled,
+              gmailEnabled: sourceSettings.gmailEnabled,
+              gmailConfigured: status.configured,
+            },
+            lastSyncAt: status.lastSyncAt?.toISOString() ?? null,
+            totalTransactions: financeService.getTotalTransactionCount(),
+          })
+        );
+        return;
+      }
+
+      if (
+        pathname === '/webhook/macrodroid' ||
+        pathname === '/webhook/notif' ||
+        pathname === '/macrodroid'
+      ) {
+        const { payload, providedSecret } = await extractMacroDroidPayload(req, urlObj);
+        const result = await processMacroDroidWebhook({
+          payload,
+          providedSecret,
+          config,
+          financeService,
+          onNewTransaction: async (tx) => {
+            console.log(
+              `[MacroDroid] Transaksi baru tercatat (#${tx.id}): ${tx.type} Rp ${tx.amount} — ${tx.description}`
+            );
+            await telegramBot.notifyNewTransaction(tx);
+          },
+          onUnparsedNotification: async (info) => {
+            console.warn(`[MacroDroid] Notifikasi gagal di-parse: "${info.subject}" (${info.reason})`);
+            await telegramBot.notifyUnparsedEmail(info);
+          },
+        });
+
+        res.writeHead(result.httpStatus, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(result.body));
+        return;
+      }
+
+      res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: 'Not Found' }));
+    } catch (err) {
+      console.error('[HTTPServer] Error memproses request:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: 'Internal Server Error' }));
     }
-    res.writeHead(404);
-    res.end('Not Found');
   });
 
   healthServer.listen(config.port, () => {
-    console.log(`[App] Healthcheck server aktif di port ${config.port}`);
+    console.log(
+      `[App] HTTP & MacroDroid Webhook server aktif di port ${config.port} (endpoint: /webhook/macrodroid)`
+    );
   });
 
   await telegramBot.start();

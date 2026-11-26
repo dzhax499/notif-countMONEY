@@ -3,6 +3,7 @@ import type {
   DailySummary,
   MonthlySummary,
   NewTransactionInput,
+  NotificationSourceSettings,
   Transaction,
 } from '../types.js';
 import { toDateKey, toMonthKey } from './formatter.js';
@@ -39,6 +40,22 @@ export class FinanceService {
 
     // Anti-duplikat tambahan berdasarkan nomor referensi SeaBank (jika email dikirim ulang / diforward)
     if (input.reference && this.db.hasTransactionByReference(input.reference)) {
+      return {
+        transaction: this.db.getRecentTransactions(1)[0],
+        duplicated: true,
+      };
+    }
+
+    // Anti-duplikat lintas-sumber (jika Gmail & MacroDroid sama-sama aktif, cegah transaksi yang sama tercatat 2x dalam 5 menit)
+    if (
+      input.source !== 'manual' &&
+      this.db.hasRecentCrossSourceDuplicate({
+        type: input.type,
+        amount: input.amount,
+        incomingSource: input.source,
+        windowSeconds: 300,
+      })
+    ) {
       return {
         transaction: this.db.getRecentTransactions(1)[0],
         duplicated: true,
@@ -140,6 +157,18 @@ export class FinanceService {
 
   markEmailProcessed(messageId: string, subject: string, status: 'recorded' | 'ignored' | 'unparsed'): void {
     this.db.markEmailProcessed(messageId, subject, status);
+  }
+
+  getSourceSettings(): NotificationSourceSettings {
+    return this.db.getSourceSettings();
+  }
+
+  setGmailEnabled(enabled: boolean): NotificationSourceSettings {
+    return this.db.setGmailEnabled(enabled);
+  }
+
+  setMacrodroidEnabled(enabled: boolean): NotificationSourceSettings {
+    return this.db.setMacrodroidEnabled(enabled);
   }
 
   getTodayDateKey(now: Date = new Date()): string {

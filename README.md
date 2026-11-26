@@ -105,9 +105,37 @@ npm run dev
 | `/masuk <nominal> [ket]` | Catat uang masuk manual |
 | `/keluar <nominal> [ket]` | Catat uang keluar manual |
 | `/hapus <id>` | Hapus transaksi berdasarkan ID & kembalikan saldo otomatis |
+| `/sumber` (atau `/notif`) | **Tombol Interaktif ON/OFF** untuk memilih sumber notifikasi: **MacroDroid (HP Android)**, **Email Gmail**, atau **Keduanya** |
 | `/cekemail` | Paksa cek email SeaBank terbaru di Gmail sekarang juga |
-| `/status` | Cek status koneksi Gmail, sync terakhir, jadwal rekap & total transaksi |
-| `/simulasi <subject> \| <isi>` | Uji parser email SeaBank tanpa mengubah database/saldo |
+| `/status` | Cek status MacroDroid, koneksi Gmail, sync terakhir, jadwal rekap & total transaksi |
+| `/simulasi <subject> \| <isi>` | Uji parser SeaBank tanpa mengubah database/saldo |
+
+---
+
+## 📱 Cara Setup MacroDroid di HP Android (Semua Nominal Transaksi Termasuk < Rp 100.000)
+
+Jika email Gmail SeaBank tidak masuk untuk transaksi di bawah Rp 100.000, Anda bisa menggunakan **MacroDroid** di HP Android yang terpasang SeaBank untuk menangkap **Push Notification SeaBank** secara 100% otomatis:
+
+1. **Install MacroDroid** dari Google Play Store di HP Android yang login aplikasi SeaBank.
+2. Buka MacroDroid → klik **Add Macro (+)** → beri nama `SeaBank ke Telegram Bot`.
+3. **Triggers (Merah):**
+   - Pilih **Device Events** → **Notification** → **Notification Received**.
+   - Pilih **Select Application(s)** → centang **SeaBank** → pilih **Matches / Contains** (kosongkan teks agar semua notif transaksi SeaBank tertangkap).
+4. **Actions (Biru):**
+   - Pilih **Web Interactions** → **HTTP Request**.
+   - **Request Method:** `POST`
+   - **URL:** `http://<IP_ATAU_DOMAIN_VPS_ANDA>:3000/webhook/macrodroid` *(jika mengisi `WEBHOOK_SECRET` di `.env`, tambahkan `?secret=TOKEN_ANDA` di ujung URL)*
+   - **Content Body (tab Content Body):**
+     - **Content Type:** `application/json`
+     - **Body Text:**
+       ```json
+       {
+         "title": "{not_title}",
+         "text": "{not_text}",
+         "bigText": "{not_sub_text}"
+       }
+       ```
+5. Simpan Macro tersebut, lalu ketik **`/sumber`** di chat Bot Telegram Anda untuk mengatur tombol ON/OFF (**MacroDroid ON**, **Gmail ON/OFF**, atau **Keduanya**).
 
 ---
 

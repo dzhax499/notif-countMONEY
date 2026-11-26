@@ -1,6 +1,11 @@
 export type TransactionType = 'income' | 'expense';
 
-export type TransactionSource = 'seabank_email' | 'manual';
+export type TransactionSource = 'seabank_email' | 'macrodroid' | 'manual';
+
+export interface NotificationSourceSettings {
+  gmailEnabled: boolean;
+  macrodroidEnabled: boolean;
+}
 
 export interface Transaction {
   id: number;

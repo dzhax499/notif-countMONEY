@@ -1,4 +1,4 @@
-import { Bot, type Context } from 'grammy';
+import { Bot, InlineKeyboard, type Context } from 'grammy';
 import type { AppConfig } from '../config.js';
 import { parseFlexibleRupiah, parseQuickTextMessage } from '../parser/quickTextParser.js';
 import { parseSeaBankEmail } from '../parser/seabankParser.js';
@@ -12,7 +12,7 @@ import {
   formatTransactionNotification,
 } from '../services/formatter.js';
 import type { GmailWatcher } from '../services/gmailWatcher.js';
-import type { Transaction } from '../types.js';
+import type { NotificationSourceSettings, Transaction } from '../types.js';
 
 export class TelegramFinanceBot {
   public readonly bot: Bot;
@@ -85,9 +85,10 @@ export class TelegramFinanceBot {
         '/masuk <nominal> [ket] — Catat uang masuk manual',
         '/keluar <nominal> [ket] — Catat uang keluar manual',
         '/hapus <id> — Hapus transaksi berdasarkan ID & kembalikan saldo',
+        '/sumber — Tombol ON/OFF sumber notifikasi (MacroDroid & Gmail)',
         '/cekemail — Cek email notifikasi SeaBank di Gmail sekarang',
-        '/status — Cek status koneksi Gmail & jadwal rekap otomatis',
-        '/simulasi <subject> | <isi> — Uji parser email SeaBank tanpa menyimpan data',
+        '/status — Cek status koneksi Gmail, MacroDroid & jadwal rekap',
+        '/simulasi <subject> | <isi> — Uji parser SeaBank tanpa menyimpan data',
       ];
 
       if (!this.config.telegramChatId) {
@@ -261,12 +262,22 @@ export class TelegramFinanceBot {
 
     this.bot.command('status', async (ctx) => {
       const watcherStatus = this.gmailWatcher?.getStatus();
+      const sourceSettings = this.financeService.getSourceSettings();
       const totalTx = this.financeService.getTotalTransactionCount();
       const balance = this.financeService.getCurrentBalance();
 
-      const gmailLine = watcherStatus?.configured
-        ? `✅ Aktif (${watcherStatus.gmailUser}, cek tiap ${watcherStatus.pollIntervalSeconds} detik)`
-        : '⚠️ Belum dikonfigurasi (hanya mode manual)';
+      let gmailLine: string;
+      if (!sourceSettings.gmailEnabled) {
+        gmailLine = '🔴 NONAKTIF (dimatikan lewat /sumber)';
+      } else if (watcherStatus?.configured) {
+        gmailLine = `🟢 AKTIF (${watcherStatus.gmailUser}, cek tiap ${watcherStatus.pollIntervalSeconds} detik)`;
+      } else {
+        gmailLine = '⚠️ ON tapi belum diisi di .env';
+      }
+
+      const macrodroidLine = sourceSettings.macrodroidEnabled
+        ? `🟢 AKTIF (Webhook port ${this.config.port} -> /webhook/macrodroid)`
+        : '🔴 NONAKTIF (dimatikan lewat /sumber)';
 
       const lastSyncLine = watcherStatus?.lastSyncAt
         ? formatTimestamp(watcherStatus.lastSyncAt.toISOString(), this.config.timezone)
@@ -275,11 +286,14 @@ export class TelegramFinanceBot {
       const lines = [
         '🤖 Status Bot Notif SeaBank',
         '',
+        `• Notif HP (MacroDroid): ${macrodroidLine}`,
         `• Gmail IMAP: ${gmailLine}`,
         `• Sync Gmail Terakhir: ${lastSyncLine}`,
         `• Jadwal Rekap Otomatis: ${this.config.dailyRecapCron} (${this.config.timezone})`,
         `• Total Transaksi Tersimpan: ${totalTx}`,
         `• Jumlah Uang Sekarang: ${formatRupiah(balance)}`,
+        '',
+        '💡 Ketik /sumber untuk menampilkan tombol ON/OFF Gmail & MacroDroid.',
       ];
 
       if (watcherStatus?.lastError) {
@@ -287,6 +301,102 @@ export class TelegramFinanceBot {
       }
 
       await ctx.reply(lines.join('\n'));
+    });
+
+    const buildSourcePanel = (settings: NotificationSourceSettings) => {
+      const gmailIcon = settings.gmailEnabled ? '🟢 ON' : '🔴 OFF';
+      const macroIcon = settings.macrodroidEnabled ? '🟢 ON' : '🔴 OFF';
+
+      let modeDesc = '';
+      if (settings.gmailEnabled && settings.macrodroidEnabled) {
+        modeDesc =
+          '🔄 Mode Aktif: Keduanya Menyala (Dilengkapi Anti-Duplikat Otomatis 5 menit agar transaksi yang sama tidak terhitung 2x).';
+      } else if (settings.macrodroidEnabled && !settings.gmailEnabled) {
+        modeDesc =
+          '📱 Mode Aktif: Hanya MacroDroid (Semua nominal transaksi dari push notif HP Android masuk, polling Gmail dimatikan).';
+      } else if (settings.gmailEnabled && !settings.macrodroidEnabled) {
+        modeDesc = '📧 Mode Aktif: Hanya Email Gmail (Webhook MacroDroid dinonaktifkan).';
+      } else {
+        modeDesc = '⏸️ Mode Aktif: Semua sumber otomatis dimatikan (Hanya mode ketik cepat / manual di Telegram).';
+      }
+
+      const text = [
+        '🎛️ Pengaturan Sumber Notifikasi Otomatis SeaBank',
+        '',
+        `• 📱 MacroDroid (Notif HP Android): ${macroIcon}`,
+        `• 📧 Email Gmail (IMAP): ${gmailIcon}`,
+        '',
+        modeDesc,
+        '',
+        'Klik tombol di bawah untuk menyalakan / mematikan sumber notifikasi kapan saja:',
+      ].join('\n');
+
+      const keyboard = new InlineKeyboard()
+        .text(`📱 MacroDroid: ${macroIcon}`, 'toggle_source:macrodroid')
+        .text(`📧 Gmail: ${gmailIcon}`, 'toggle_source:gmail')
+        .row()
+        .text('📱 Hanya MacroDroid', 'toggle_source:only_macrodroid')
+        .text('📧 Hanya Gmail', 'toggle_source:only_gmail')
+        .row()
+        .text('🔄 Aktifkan Keduanya', 'toggle_source:both');
+
+      return { text, keyboard };
+    };
+
+    const handleSourceCommand = async (ctx: Context) => {
+      const arg = ((ctx.match as string | undefined) ?? '').trim().toLowerCase();
+      let settings = this.financeService.getSourceSettings();
+
+      if (arg === 'macrodroid' || arg === 'hp' || arg === 'android') {
+        settings = this.financeService.setMacrodroidEnabled(true);
+        settings = this.financeService.setGmailEnabled(false);
+      } else if (arg === 'gmail' || arg === 'email') {
+        settings = this.financeService.setGmailEnabled(true);
+        settings = this.financeService.setMacrodroidEnabled(false);
+      } else if (arg === 'keduanya' || arg === 'all' || arg === 'both' || arg === 'on') {
+        settings = this.financeService.setGmailEnabled(true);
+        settings = this.financeService.setMacrodroidEnabled(true);
+      } else if (arg === 'off' || arg === 'mati') {
+        settings = this.financeService.setGmailEnabled(false);
+        settings = this.financeService.setMacrodroidEnabled(false);
+      }
+
+      const panel = buildSourcePanel(settings);
+      await ctx.reply(panel.text, { reply_markup: panel.keyboard });
+    };
+
+    this.bot.command('sumber', handleSourceCommand);
+    this.bot.command('notif', handleSourceCommand);
+    this.bot.command('mode', handleSourceCommand);
+
+    this.bot.callbackQuery(/^toggle_source:(.+)$/, async (ctx) => {
+      const action = ctx.match[1];
+      let current = this.financeService.getSourceSettings();
+
+      if (action === 'macrodroid') {
+        current = this.financeService.setMacrodroidEnabled(!current.macrodroidEnabled);
+      } else if (action === 'gmail') {
+        current = this.financeService.setGmailEnabled(!current.gmailEnabled);
+      } else if (action === 'only_macrodroid') {
+        this.financeService.setGmailEnabled(false);
+        current = this.financeService.setMacrodroidEnabled(true);
+      } else if (action === 'only_gmail') {
+        this.financeService.setMacrodroidEnabled(false);
+        current = this.financeService.setGmailEnabled(true);
+      } else if (action === 'both') {
+        this.financeService.setGmailEnabled(true);
+        current = this.financeService.setMacrodroidEnabled(true);
+      }
+
+      const panel = buildSourcePanel(current);
+      try {
+        await ctx.editMessageText(panel.text, { reply_markup: panel.keyboard });
+      } catch {
+        // Abaikan error jika user menekan tombol yang sama dan teks tidak berubah
+      }
+      await ctx.answerCallbackQuery({
+        text: `MacroDroid: ${current.macrodroidEnabled ? 'ON' : 'OFF'} | Gmail: ${current.gmailEnabled ? 'ON' : 'OFF'}`,
+      });
     });
 
     this.bot.command('simulasi', async (ctx) => {
@@ -451,6 +561,7 @@ export class TelegramFinanceBot {
       { command: 'masuk', description: 'Catat uang masuk manual' },
       { command: 'keluar', description: 'Catat uang keluar manual' },
       { command: 'bulan', description: 'Rekap transaksi bulan ini' },
+      { command: 'sumber', description: 'Tombol ON/OFF sumber notifikasi (MacroDroid & Gmail)' },
       { command: 'cekemail', description: 'Cek email SeaBank terbaru sekarang' },
       { command: 'hapus', description: 'Hapus transaksi berdasarkan ID' },
       { command: 'status', description: 'Cek status bot & koneksi Gmail' },

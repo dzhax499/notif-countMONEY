@@ -66,6 +66,9 @@ export class GmailWatcher {
     );
 
     const runScheduledSync = async (label: string) => {
+      if (!this.financeService.getSourceSettings().gmailEnabled) {
+        return;
+      }
       if (Date.now() < this.backoffUntil) {
         return;
       }

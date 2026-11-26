@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { FinanceDatabase } from '../src/db/database.js';
 import { FinanceService } from '../src/services/financeService.js';
+import { processMacroDroidWebhook } from '../src/services/webhookHandler.js';
 
 describe('FinanceService with SQLite', () => {
   it('tracks balance, daily summary, deduplication, and deletion rollback accurately', () => {
@@ -102,6 +103,72 @@ describe('FinanceService with SQLite', () => {
       dateKey: '2026-11-23',
       isToday: true,
     });
+
+    db.close();
+  });
+
+  it('supports ON/OFF source toggles, MacroDroid webhook, and cross-source anti-duplication', async () => {
+    const db = new FinanceDatabase(':memory:');
+    const service = new FinanceService(db, 'Asia/Jakarta');
+    service.setCurrentBalance(500_000);
+
+    // Default: kedua sumber (Gmail & MacroDroid) ON
+    assert.deepEqual(service.getSourceSettings(), {
+      gmailEnabled: true,
+      macrodroidEnabled: true,
+    });
+
+    // 1. MacroDroid mengirim transaksi QRIS Rp 15.000 (< 100rb)
+    const res1 = await processMacroDroidWebhook({
+      payload: {
+        title: 'SeaBank',
+        text: 'Pembayaran QRIS sebesar Rp 15.000 ke WARUNG NASI berhasil.',
+      },
+      config: { webhookSecret: null, notifyUnparsedEmail: false },
+      financeService: service,
+    });
+
+    assert.equal(res1.httpStatus, 200);
+    assert.equal(res1.body.ok, true);
+    assert.equal(res1.body.recorded, true);
+    assert.equal(service.getCurrentBalance(), 485_000);
+
+    // 2. Transaksi Rp 150.000 masuk via MacroDroid dulu, lalu 10 detik kemudian masuk via Email Gmail
+    const macroBig = await processMacroDroidWebhook({
+      payload: {
+        title: 'Transfer Masuk',
+        text: 'Kamu menerima transfer sebesar Rp 150.000 dari ANDI.',
+      },
+      config: { webhookSecret: null, notifyUnparsedEmail: false },
+      financeService: service,
+    });
+    assert.equal(macroBig.body.recorded, true);
+    assert.equal(service.getCurrentBalance(), 635_000);
+
+    // Saat Gmail mencoba mencatat transaksi income Rp 150.000 yang sama dalam < 5 menit, otomatis terdeteksi duplikat!
+    const gmailDup = service.recordTransaction({
+      type: 'income',
+      amount: 150_000,
+      description: 'Transfer Masuk Berhasil (dari ANDI)',
+      source: 'seabank_email',
+      externalId: '<gmail-msg-150k@seabank.co.id>',
+    });
+    assert.equal(gmailDup.duplicated, true);
+    assert.equal(service.getCurrentBalance(), 635_000);
+
+    // 3. Jika MacroDroid di-OFF-kan lewat tombol /sumber, webhook akan skip dan tidak mencatat
+    service.setMacrodroidEnabled(false);
+    const skippedRes = await processMacroDroidWebhook({
+      payload: {
+        title: 'SeaBank',
+        text: 'Pembayaran QRIS sebesar Rp 20.000 ke KOPI berhasil.',
+      },
+      config: { webhookSecret: null, notifyUnparsedEmail: false },
+      financeService: service,
+    });
+    assert.equal(skippedRes.httpStatus, 200);
+    assert.equal(skippedRes.body.skipped, true);
+    assert.equal(service.getCurrentBalance(), 635_000);
 
     db.close();
   });

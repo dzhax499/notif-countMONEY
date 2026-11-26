@@ -16,6 +16,7 @@ export interface AppConfig {
   dailyRecapCron: string;
   databasePath: string;
   port: number;
+  webhookSecret: string | null;
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -67,5 +68,6 @@ export function loadConfig(): AppConfig {
     dailyRecapCron: (process.env.DAILY_RECAP_CRON ?? '0 0 * * *').trim(),
     databasePath,
     port: parsePositiveInt(process.env.PORT, 3000),
+    webhookSecret: (process.env.WEBHOOK_SECRET ?? '').trim() || null,
   };
 }
