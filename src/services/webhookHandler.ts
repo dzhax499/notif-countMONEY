@@ -2,7 +2,10 @@ import crypto from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { AppConfig } from '../config.js';
 import { parseQuickTextMessage } from '../parser/quickTextParser.js';
-import { parseSeaBankPushNotification } from '../parser/seabankParser.js';
+import {
+  cleanMacroDroidPlaceholder,
+  parseSeaBankPushNotification,
+} from '../parser/seabankParser.js';
 import type { Transaction } from '../types.js';
 import type { FinanceService } from './financeService.js';
 
@@ -71,10 +74,33 @@ export async function processMacroDroidWebhook(params: {
     };
   }
 
-  const title = (payload.title ?? '').trim();
-  const text = (payload.text ?? '').trim();
-  const bigText = (payload.bigText ?? '').trim();
-  const combinedText = (bigText || text || title).trim();
+  const rawTitle = (payload.title ?? '').trim();
+  const rawText = (payload.text ?? '').trim();
+  const rawBigText = (payload.bigText ?? '').trim();
+
+  const title = cleanMacroDroidPlaceholder(rawTitle);
+  const text = cleanMacroDroidPlaceholder(rawText);
+  const bigText = cleanMacroDroidPlaceholder(rawBigText);
+  const combinedText = (text && bigText && bigText !== text ? `${text}\n${bigText}` : text || bigText || title).trim();
+
+  if (!combinedText && (rawTitle || rawText || rawBigText)) {
+    const reason =
+      'Variabel MacroDroid belum terbaca (masih tertulis {not_title} / {not_text}). Di MacroDroid ganti kurung kurawal {...} menjadi kurung siku [not_title] dan [not_text], atau pilih variabel lewat tombol titik tiga (...) Magic Text.';
+    if (config.notifyUnparsedEmail && onUnparsedNotification) {
+      await onUnparsedNotification({
+        subject: rawTitle || '(Placeholder MacroDroid)',
+        reason,
+        snippet: `${rawText || rawBigText}`.slice(0, 220),
+      });
+    }
+    return {
+      httpStatus: 422,
+      body: {
+        ok: false,
+        reason,
+      },
+    };
+  }
 
   if (!combinedText) {
     return {

@@ -536,14 +536,23 @@ export class TelegramFinanceBot {
     await this.sendMessageToOwner(message);
   }
 
-  async notifyUnparsedEmail(info: {
-    subject: string;
-    reason: string;
-    snippet: string;
-  }): Promise<void> {
+  async notifyUnparsedEmail(
+    info: {
+      subject: string;
+      reason: string;
+      snippet: string;
+    },
+    source: 'email' | 'macrodroid' = 'email'
+  ): Promise<void> {
+    const header =
+      source === 'macrodroid'
+        ? '⚠️ Ada notifikasi HP (MacroDroid) masuk namun gagal di-parse otomatis:'
+        : '⚠️ Ada email SeaBank masuk namun gagal di-parse otomatis:';
+    const subjectLabel = source === 'macrodroid' ? 'Judul Notif' : 'Subject';
+
     const message = [
-      '⚠️ Ada email SeaBank masuk namun gagal di-parse otomatis:',
-      `• Subject: ${info.subject}`,
+      header,
+      `• ${subjectLabel}: ${info.subject}`,
       `• Alasan: ${info.reason}`,
       `• Cuplikan: ${info.snippet || '(kosong)'}`,
       '',

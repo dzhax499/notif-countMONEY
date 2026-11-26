@@ -174,13 +174,13 @@ function detectTransactionType(subject: string, body: string): TransactionType |
 const AMOUNT_REGEX = /(?:Rp\.?|IDR)\s*([0-9][0-9.,]*)(?:,-)?/gi;
 
 function extractPrimaryAmount(body: string): number | null {
-  // 1. Cari berdasarkan label yang sangat jelas (Total Pembayaran / Nominal Transaksi / Jumlah / sebesar)
+  // 1. Cari berdasarkan label yang sangat jelas (mendukung dengan atau tanpa prefix "Rp", contoh: "sebesar 22.500")
   const prioritizedLabels: RegExp[] = [
-    /(?:total\s+(?:pembayaran|transaksi|debit|bayar|nominal|amount))\s*[:\-]?\s*(?:Rp\.?|IDR)\s*([0-9][0-9.,]*)/i,
-    /(?:nominal\s+(?:transaksi|transfer|pembayaran|masuk|keluar)?)\s*[:\-]?\s*(?:Rp\.?|IDR)\s*([0-9][0-9.,]*)/i,
-    /(?:jumlah\s+(?:transaksi|transfer|pembayaran|dana|uang)?)\s*[:\-]?\s*(?:Rp\.?|IDR)\s*([0-9][0-9.,]*)/i,
-    /(?:amount|transaction\s+amount|transfer\s+amount)\s*[:\-]?\s*(?:Rp\.?|IDR)\s*([0-9][0-9.,]*)/i,
-    /sebesar\s+(?:Rp\.?|IDR)\s*([0-9][0-9.,]*)/i,
+    /(?:total\s+(?:pembayaran|transaksi|debit|bayar|nominal|amount))\s*[:\-]?\s*(?:(?:Rp\.?|IDR)\s*)?([0-9][0-9.,]*)/i,
+    /(?:nominal\s+(?:transaksi|transfer|pembayaran|masuk|keluar)?)\s*[:\-]?\s*(?:(?:Rp\.?|IDR)\s*)?([0-9][0-9.,]*)/i,
+    /(?:jumlah\s+(?:transaksi|transfer|pembayaran|dana|uang)?)\s*[:\-]?\s*(?:(?:Rp\.?|IDR)\s*)?([0-9][0-9.,]*)/i,
+    /(?:amount|transaction\s+amount|transfer\s+amount)\s*[:\-]?\s*(?:(?:Rp\.?|IDR)\s*)?([0-9][0-9.,]*)/i,
+    /(?:sebesar|senilai|sejumlah)\s+(?:(?:Rp\.?|IDR)\s*)?([0-9][0-9.,]*)/i,
   ];
 
   for (const regex of prioritizedLabels) {
@@ -193,7 +193,7 @@ function extractPrimaryAmount(body: string): number | null {
     }
   }
 
-  // 2. Fallback: scan per baris, abaikan baris Biaya Admin & Saldo Akhir
+  // 2. Fallback: scan per baris dengan prefix Rp/IDR, abaikan baris Biaya Admin & Saldo Akhir
   const lines = body.split(/\r?\n/);
   for (const line of lines) {
     if (/(?:biaya\s+(?:admin|transfer|layanan)|admin\s+fee|fee|saldo\s+(?:akhir|sekarang|tersedia)|sisa\s+saldo|balance)/i.test(line)) {
@@ -202,6 +202,20 @@ function extractPrimaryAmount(body: string): number | null {
     const matches = [...line.matchAll(AMOUNT_REGEX)];
     for (const match of matches) {
       const parsed = parseRupiahAmount(match[1]);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+  }
+
+  // 3. Fallback tambahan untuk push notif tanpa "Rp": cari angka format ribuan titik Indonesia (contoh: 22.500 atau 150.000)
+  for (const line of lines) {
+    if (/(?:biaya\s+(?:admin|transfer|layanan)|admin\s+fee|fee|saldo\s+(?:akhir|sekarang|tersedia)|sisa\s+saldo|balance)/i.test(line)) {
+      continue;
+    }
+    const dotNumberMatch = line.match(/\b(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?)\b/);
+    if (dotNumberMatch?.[1]) {
+      const parsed = parseRupiahAmount(dotNumberMatch[1]);
       if (parsed !== null) {
         return parsed;
       }
@@ -230,11 +244,11 @@ function extractCounterparty(body: string, type: TransactionType): string | null
     type === 'income'
       ? [
           /(?:dari|pengirim|nama\s+pengirim|sender|from)\s*[:\-]\s*([^\n]{2,80})/i,
-          /menerima\s+(?:dana|transfer)[\s\S]{0,40}\bdari\s+([^\n.,]{2,60})/i,
+          /(?:menerima|transfer\s+masuk|dana\s+masuk|bertambah)[\s\S]{0,60}\bdari\s+([^\n.,]{2,100})/i,
         ]
       : [
           /(?:merchant|nama\s+merchant|penerima|nama\s+penerima|tujuan|ke\s+rekening|recipient|beneficiary)\s*[:\-]\s*([^\n]{2,80})/i,
-          /(?:pembayaran\s+qris|transfer)[\s\S]{0,40}\b(?:ke|di)\s+([^\n.,]{2,60})/i,
+          /(?:pembayaran\s+qris|pembayaran|transfer)[\s\S]{0,40}\b(?:untuk|ke|di|kepada)\s+([^\n.,]{2,100})/i,
         ];
 
   for (const pattern of patterns) {
@@ -243,7 +257,8 @@ function extractCounterparty(body: string, type: TransactionType): string | null
       const cleaned = match[1]
         .replace(/\s+/g, ' ')
         .replace(/^(?:rekening|bank)\s+/i, '')
-        .replace(/\s+(?:berhasil|sukses).*$/i, '')
+        .replace(/\s+(?:sebesar|senilai|sejumlah)\b.*$/i, '')
+        .replace(/\s+(?:telah\s+)?(?:berhasil|sukses).*$/i, '')
         .replace(/[:\-.,;\s]+$/, '')
         .trim();
       if (cleaned.length >= 2 && !/^(?:rp|idr|\d+)$/i.test(cleaned)) {
@@ -308,6 +323,17 @@ function buildDescription(
 }
 
 /**
+ * Membersihkan placeholder variabel MacroDroid yang belum terganti (misal "{not_sub_text}" atau "[not_sub_text]").
+ */
+export function cleanMacroDroidPlaceholder(value?: string): string {
+  if (!value) return '';
+  return value
+    .replace(/\{(?:not_[a-z0-9_]+|notification[a-z0-9_]*)\}/gi, '')
+    .replace(/\[(?:not_[a-z0-9_]+|notification[a-z0-9_]*)\]/gi, '')
+    .trim();
+}
+
+/**
  * Mem-parse Push Notification SeaBank dari HP Android (MacroDroid) atau teks Struk OCR.
  */
 export function parseSeaBankPushNotification(input: {
@@ -316,14 +342,22 @@ export function parseSeaBankPushNotification(input: {
   bigText?: string;
   date?: Date;
 }): ParseResult {
-  const rawTitle = (input.title ?? '').trim();
-  const mainText = (input.bigText?.trim() || input.text?.trim() || '').trim();
+  const rawTitle = cleanMacroDroidPlaceholder(input.title);
+  const cleanText = cleanMacroDroidPlaceholder(input.text);
+  const cleanBig = cleanMacroDroidPlaceholder(input.bigText);
+
+  // Gabungkan text dan bigText jika keduanya ada dan berbeda, agar tidak saling menimpa
+  let mainText = cleanText;
+  if (cleanBig && cleanBig !== cleanText) {
+    mainText = cleanText ? `${cleanText}\n${cleanBig}` : cleanBig;
+  }
 
   if (!rawTitle && !mainText) {
     return {
       matched: false,
       isSeaBankEmail: false,
-      reason: 'Isi notifikasi kosong',
+      reason:
+        'Variabel MacroDroid masih berupa placeholder ({not_title}/{not_text}). Di MacroDroid gunakan [not_title] & [not_text] atau pilih lewat tombol "..." (Magic Text).',
     };
   }
 

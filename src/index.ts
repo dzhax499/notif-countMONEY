@@ -81,7 +81,7 @@ async function main(): Promise<void> {
           },
           onUnparsedNotification: async (info) => {
             console.warn(`[MacroDroid] Notifikasi gagal di-parse: "${info.subject}" (${info.reason})`);
-            await telegramBot.notifyUnparsedEmail(info);
+            await telegramBot.notifyUnparsedEmail(info, 'macrodroid');
           },
         });
 

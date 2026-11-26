@@ -170,5 +170,20 @@ describe('parseSeaBankEmail', () => {
     assert.equal(incomingNotif.matched, true);
     assert.equal(incomingNotif.transaction?.type, 'income');
     assert.equal(incomingNotif.transaction?.amount, 45000);
+
+    // Format asli push notif SeaBank tanpa tulisan "Rp" + bigText berisi placeholder {not_sub_text} yang belum terganti
+    const realQrisNotif = parseSeaBankPushNotification({
+      title: 'Pembayaran QRIS berhasil',
+      text: 'Pembayaran QRIS untuk QRIS IDM TWUE GEGER KALO sebesar 22.500 telah berhasil.',
+      bigText: '{not_sub_text}',
+    });
+    assert.equal(realQrisNotif.matched, true);
+    assert.equal(realQrisNotif.transaction?.type, 'expense');
+    assert.equal(realQrisNotif.transaction?.amount, 22500);
+    assert.equal(realQrisNotif.transaction?.counterparty, 'QRIS IDM TWUE GEGER KALO');
+    assert.equal(
+      realQrisNotif.transaction?.description,
+      'Pembayaran QRIS berhasil (ke QRIS IDM TWUE GEGER KALO)'
+    );
   });
 });
