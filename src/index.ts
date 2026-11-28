@@ -5,7 +5,12 @@ import { FinanceDatabase } from './db/database.js';
 import { FinanceService } from './services/financeService.js';
 import { GmailWatcher } from './services/gmailWatcher.js';
 import { DailyRecapScheduler } from './services/scheduler.js';
-import { extractMacroDroidPayload, processMacroDroidWebhook } from './services/webhookHandler.js';
+import {
+  extractMacroDroidPayload,
+  MacroDroidWebhookTracker,
+  processMacroDroidWebhook,
+  type WebhookLogEntry,
+} from './services/webhookHandler.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -30,7 +35,9 @@ async function main(): Promise<void> {
     },
   });
 
+  const webhookTracker = new MacroDroidWebhookTracker();
   telegramBot.attachGmailWatcher(gmailWatcher);
+  telegramBot.attachWebhookTracker(webhookTracker);
 
   const scheduler = new DailyRecapScheduler(config.dailyRecapCron, config.timezone, async () => {
     await telegramBot.sendDailyRecap();
@@ -84,6 +91,42 @@ async function main(): Promise<void> {
             await telegramBot.notifyUnparsedEmail(info, 'macrodroid');
           },
         });
+
+        const outcome: WebhookLogEntry['outcome'] =
+          result.httpStatus === 401
+            ? 'unauthorized'
+            : result.body.recorded
+              ? 'recorded'
+              : result.body.duplicated
+                ? 'duplicated'
+                : result.body.ignored
+                  ? 'ignored'
+                  : result.body.skipped
+                    ? 'skipped'
+                    : result.httpStatus === 422 || result.httpStatus === 400
+                      ? 'unparsed'
+                      : 'error';
+
+        const logTitle = (payload.title || '(tanpa judul)').slice(0, 80);
+        const logSnippet = (payload.text || payload.bigText || payload.title || '(kosong)')
+          .replace(/\s+/g, ' ')
+          .slice(0, 120);
+
+        webhookTracker.record({
+          receivedAt: new Date(),
+          httpStatus: result.httpStatus,
+          outcome,
+          title: logTitle,
+          snippet: logSnippet,
+          reason: result.body.reason,
+          transactionId: result.body.transaction?.id,
+        });
+
+        console.log(
+          `[MacroDroid] HTTP ${result.httpStatus} | ${outcome} | title="${logTitle}" | text="${logSnippet}"${
+            result.body.reason ? ` | reason="${result.body.reason}"` : ''
+          }`
+        );
 
         res.writeHead(result.httpStatus, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify(result.body));

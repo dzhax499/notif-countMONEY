@@ -13,11 +13,13 @@ import {
   formatTransactionNotification,
 } from '../services/formatter.js';
 import type { GmailWatcher } from '../services/gmailWatcher.js';
+import type { MacroDroidWebhookTracker } from '../services/webhookHandler.js';
 import type { NotificationSourceSettings, Transaction } from '../types.js';
 
 export class TelegramFinanceBot {
   public readonly bot: Bot;
   private gmailWatcher: GmailWatcher | null = null;
+  private webhookTracker: MacroDroidWebhookTracker | null = null;
 
   constructor(
     private readonly config: AppConfig,
@@ -31,6 +33,10 @@ export class TelegramFinanceBot {
 
   attachGmailWatcher(watcher: GmailWatcher): void {
     this.gmailWatcher = watcher;
+  }
+
+  attachWebhookTracker(tracker: MacroDroidWebhookTracker): void {
+    this.webhookTracker = tracker;
   }
 
   /**
@@ -99,6 +105,7 @@ export class TelegramFinanceBot {
         '/keluar <nominal> [ket] — Catat uang keluar manual',
         '/hapus <id> — Hapus transaksi berdasarkan ID & kembalikan saldo',
         '/sumber — Tombol ON/OFF sumber notifikasi (MacroDroid & Gmail)',
+        '/lognotif — Lihat 10 request webhook MacroDroid terakhir yang masuk',
         '/cekemail — Cek email notifikasi SeaBank di Gmail sekarang',
         '/status — Cek status koneksi Gmail, MacroDroid & jadwal rekap',
         '/simulasi <subject> | <isi> — Uji parser SeaBank tanpa menyimpan data',
@@ -298,17 +305,23 @@ export class TelegramFinanceBot {
         ? formatTimestamp(watcherStatus.lastSyncAt.toISOString(), this.config.timezone)
         : 'Belum pernah';
 
+      const latestHook = this.webhookTracker?.getLatest();
+      const lastMacroLine = latestHook
+        ? `${formatTimestamp(latestHook.receivedAt.toISOString(), this.config.timezone)} (${latestHook.outcome}, HTTP ${latestHook.httpStatus})`
+        : 'Belum ada request masuk sejak bot menyala';
+
       const lines = [
         '🤖 Status Bot Notif SeaBank',
         '',
         `• Notif HP (MacroDroid): ${macrodroidLine}`,
+        `• Webhook MacroDroid Terakhir: ${lastMacroLine}`,
         `• Gmail IMAP: ${gmailLine}`,
         `• Sync Gmail Terakhir: ${lastSyncLine}`,
         `• Jadwal Rekap Otomatis: ${this.config.dailyRecapCron} (${this.config.timezone})`,
         `• Total Transaksi Tersimpan: ${totalTx}`,
         `• Jumlah Uang Sekarang: ${formatRupiah(balance)}`,
         '',
-        '💡 Ketik /sumber untuk menampilkan tombol ON/OFF Gmail & MacroDroid.',
+        '💡 Ketik /sumber untuk tombol ON/OFF, atau /lognotif untuk melihat log webhook MacroDroid terakhir.',
       ];
 
       if (watcherStatus?.lastError) {
@@ -316,6 +329,40 @@ export class TelegramFinanceBot {
       }
 
       await this.replyWithSpoiler(ctx, lines.join('\n'));
+    });
+
+    this.bot.command('lognotif', async (ctx) => {
+      const logs = this.webhookTracker?.getRecent(10) ?? [];
+      if (logs.length === 0) {
+        await ctx.reply(
+          '📭 Belum ada request webhook MacroDroid yang masuk ke server sejak bot dinyalakan.\n\nJika transaksi di HP tidak muncul di sini, berarti HP/MacroDroid gagal mengirim HTTP Request (cek Battery Optimization, sinyal, URL, atau timeout MacroDroid).'
+        );
+        return;
+      }
+
+      const iconMap: Record<string, string> = {
+        recorded: '✅',
+        duplicated: '♻️',
+        ignored: '⏭️',
+        skipped: '⏸️',
+        unparsed: '⚠️',
+        unauthorized: '🔒',
+        error: '❌',
+      };
+
+      const lines = [`📡 ${logs.length} Log Webhook MacroDroid Terakhir:`, ''];
+      for (const item of logs) {
+        const icon = iconMap[item.outcome] ?? '•';
+        const time = formatTimestamp(item.receivedAt.toISOString(), this.config.timezone);
+        const txPart = item.transactionId ? ` (ID #${item.transactionId})` : '';
+        lines.push(`${icon} ${time} | ${item.outcome.toUpperCase()} [${item.httpStatus}]${txPart}`);
+        lines.push(`   ${item.title} — ${item.snippet.slice(0, 90)}`);
+        if (item.reason) {
+          lines.push(`   Alasan: ${item.reason.slice(0, 120)}`);
+        }
+      }
+
+      await ctx.reply(lines.join('\n'));
     });
 
     const buildSourcePanel = (settings: NotificationSourceSettings) => {
@@ -591,6 +638,7 @@ export class TelegramFinanceBot {
       { command: 'keluar', description: 'Catat uang keluar manual' },
       { command: 'bulan', description: 'Rekap transaksi bulan ini' },
       { command: 'sumber', description: 'Tombol ON/OFF sumber notifikasi (MacroDroid & Gmail)' },
+      { command: 'lognotif', description: 'Lihat 10 log webhook MacroDroid terakhir' },
       { command: 'cekemail', description: 'Cek email SeaBank terbaru sekarang' },
       { command: 'hapus', description: 'Hapus transaksi berdasarkan ID' },
       { command: 'status', description: 'Cek status bot & koneksi Gmail' },

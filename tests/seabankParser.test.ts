@@ -186,4 +186,54 @@ describe('parseSeaBankEmail', () => {
       'Pembayaran QRIS berhasil (ke QRIS IDM TWUE GEGER KALO)'
     );
   });
+
+  it('parses non-QRIS SeaBank push notifications (transfer, top-up e-wallet, VA/Shopee, bunga)', () => {
+    const incoming = parseSeaBankPushNotification({
+      title: 'Transfer Diterima',
+      text: 'Kamu menerima 150.000 dari BUDI SANTOSO.',
+    });
+    assert.equal(incoming.matched, true);
+    assert.equal(incoming.transaction?.type, 'income');
+    assert.equal(incoming.transaction?.amount, 150000);
+    assert.equal(incoming.transaction?.counterparty, 'BUDI SANTOSO');
+
+    const outgoing = parseSeaBankPushNotification({
+      title: 'Transfer Berhasil',
+      text: 'Transfer ke SITI AMINAH sebesar 75.000 telah berhasil.',
+    });
+    assert.equal(outgoing.matched, true);
+    assert.equal(outgoing.transaction?.type, 'expense');
+    assert.equal(outgoing.transaction?.amount, 75000);
+    assert.equal(outgoing.transaction?.counterparty, 'SITI AMINAH');
+
+    const topup = parseSeaBankPushNotification({
+      title: 'SeaBank',
+      text: 'Top up ShopeePay sebesar 50.000 telah berhasil.',
+    });
+    assert.equal(topup.matched, true);
+    assert.equal(topup.transaction?.type, 'expense');
+    assert.equal(topup.transaction?.amount, 50000);
+
+    const shopeePay = parseSeaBankPushNotification({
+      title: 'Pembayaran Berhasil',
+      text: 'Pembayaran untuk Shopee sebesar 42.500 telah berhasil.',
+    });
+    assert.equal(shopeePay.matched, true);
+    assert.equal(shopeePay.transaction?.type, 'expense');
+    assert.equal(shopeePay.transaction?.amount, 42500);
+
+    const interest = parseSeaBankPushNotification({
+      title: 'Bunga Harian Masuk',
+      text: 'Bunga tabungan sebesar Rp 2.345 telah masuk ke rekeningmu.',
+    });
+    assert.equal(interest.matched, true);
+    assert.equal(interest.transaction?.type, 'income');
+    assert.equal(interest.transaction?.amount, 2345);
+
+    const promoNotif = parseSeaBankPushNotification({
+      title: 'Promo Cashback Voucher SeaBank!',
+      text: 'Dapatkan diskon hingga Rp 50.000 untuk transaksi pertamamu.',
+    });
+    assert.equal(promoNotif.matched, false);
+  });
 });

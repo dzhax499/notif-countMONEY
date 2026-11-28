@@ -9,6 +9,37 @@ import {
 import type { Transaction } from '../types.js';
 import type { FinanceService } from './financeService.js';
 
+export interface WebhookLogEntry {
+  receivedAt: Date;
+  httpStatus: number;
+  outcome: 'recorded' | 'duplicated' | 'ignored' | 'skipped' | 'unparsed' | 'unauthorized' | 'error';
+  title: string;
+  snippet: string;
+  reason?: string;
+  transactionId?: number;
+}
+
+export class MacroDroidWebhookTracker {
+  private readonly entries: WebhookLogEntry[] = [];
+
+  constructor(private readonly maxEntries = 15) {}
+
+  record(entry: WebhookLogEntry): void {
+    this.entries.unshift(entry);
+    if (this.entries.length > this.maxEntries) {
+      this.entries.length = this.maxEntries;
+    }
+  }
+
+  getLatest(): WebhookLogEntry | null {
+    return this.entries[0] ?? null;
+  }
+
+  getRecent(limit = 10): WebhookLogEntry[] {
+    return this.entries.slice(0, Math.max(1, limit));
+  }
+}
+
 export interface MacroDroidPayload {
   title?: string;
   text?: string;
@@ -121,8 +152,8 @@ export async function processMacroDroidWebhook(params: {
 
   if (parsed.matched && parsed.transaction) {
     const txData = parsed.transaction;
-    // Dedup bucket 2 menit untuk mencegah Android mengirim event banner notifikasi yang sama 2x berturut-turut
-    const bucket = Math.floor(Date.now() / 120_000);
+    // Dedup bucket 15 detik: cukup mencegah double-banner Android (1-3 detik) tanpa memblokir 2 transaksi asli berdekatan
+    const bucket = Math.floor(Date.now() / 15_000);
     const hashInput = `${bucket}|${txData.type}|${txData.amount}|${txData.reference ?? ''}|${txData.counterparty ?? ''}|${combinedText}`;
     const autoHash = crypto.createHash('sha1').update(hashInput).digest('hex').slice(0, 16);
     const externalId = payload.id?.trim() ? `md-${payload.id.trim()}` : `md-${autoHash}`;
@@ -213,6 +244,76 @@ export async function processMacroDroidWebhook(params: {
 }
 
 /**
+ * Parser JSON toleran untuk body dari MacroDroid:
+ * Jika teks notifikasi mengandung enter (\n) mentah di dalam string JSON, ubah dulu jadi \\n lalu parse ulang.
+ */
+function parseLenientMacroDroidJson(rawBody: string): Record<string, string> | null {
+  const tryParse = (input: string): Record<string, string> | null => {
+    try {
+      const parsed = JSON.parse(input) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (v !== undefined && v !== null) {
+          out[k] = String(v);
+        }
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  };
+
+  const direct = tryParse(rawBody);
+  if (direct) return direct;
+
+  // Escape newline/tab mentah hanya di dalam literal string JSON (menjaga pretty-printed JSON tetap valid)
+  let inString = false;
+  let escaped = false;
+  let sanitized = '';
+  for (let i = 0; i < rawBody.length; i++) {
+    const ch = rawBody[i];
+    if (inString) {
+      if (escaped) {
+        sanitized += ch;
+        escaped = false;
+      } else if (ch === '\\') {
+        sanitized += ch;
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+        sanitized += ch;
+      } else if (ch === '\r') {
+        if (rawBody[i + 1] === '\n') i++;
+        sanitized += '\\n';
+      } else if (ch === '\n') {
+        sanitized += '\\n';
+      } else if (ch === '\t') {
+        sanitized += ' ';
+      } else {
+        sanitized += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inString = true;
+      }
+      sanitized += ch;
+    }
+  }
+  const repaired = tryParse(sanitized);
+  if (repaired) return repaired;
+
+  // Fallback ekstraksi field manual jika ada kutip ganda tak ter-escape di dalam nilai string
+  const extracted: Record<string, string> = {};
+  const fieldRegex =
+    /"(title|subject|not_title|text|body|message|not_text|bigText|big_text|subText|not_sub_text|id|secret|token|key)"\s*:\s*"([\s\S]*?)"(?=\s*,\s*"[a-zA-Z_]+"\s*:|\s*\})/g;
+  for (const match of rawBody.matchAll(fieldRegex)) {
+    extracted[match[1]] = match[2].replace(/\\n/g, '\n').trim();
+  }
+  return Object.keys(extracted).length > 0 ? extracted : null;
+}
+
+/**
  * Membaca body HTTP request dan menggabungkannya dengan query parameter URL.
  */
 export async function extractMacroDroidPayload(
@@ -230,14 +331,10 @@ export async function extractMacroDroidPayload(
 
   if (rawBody) {
     if (contentType.includes('application/json') || (rawBody.startsWith('{') && rawBody.endsWith('}'))) {
-      try {
-        const parsed = JSON.parse(rawBody) as Record<string, unknown>;
-        for (const [k, v] of Object.entries(parsed)) {
-          if (v !== undefined && v !== null) {
-            bodyObj[k] = String(v);
-          }
-        }
-      } catch {
+      const jsonObj = parseLenientMacroDroidJson(rawBody);
+      if (jsonObj) {
+        bodyObj = jsonObj;
+      } else {
         bodyObj.text = rawBody;
       }
     } else if (contentType.includes('application/x-www-form-urlencoded')) {

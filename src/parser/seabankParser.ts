@@ -83,18 +83,29 @@ const NON_TRANSACTION_PATTERNS: RegExp[] = [
   /e-?statement/i,
   /laporan\s+bulanan/i,
   /rekening\s+koran/i,
-  /promo|diskon|voucher|undang\s+teman/i,
   /gagal|failed|ditolak|declined|dibatalkan|cancelled/i,
+];
+
+const PROMO_NON_TRANSACTION_PATTERNS: RegExp[] = [
+  /\b(?:promo|diskon|undang\s+teman|ajak\s+teman)\b/i,
+  /\bvoucher\b/i,
 ];
 
 const INCOME_PATTERNS: RegExp[] = [
   /transfer\s+masuk/i,
+  /transfer\s+diterima/i,
   /dana\s+masuk/i,
+  /dana\s+diterima/i,
   /uang\s+masuk/i,
   /penerimaan\s+dana/i,
   /menerima\s+(dana|transfer|uang)/i,
+  /(?:kamu|anda)\s+(?:telah\s+)?menerima\b/i,
   /telah\s+menerima/i,
+  /transfer\s+(?:masuk\s+)?dari\b/i,
+  /kiriman\s+(?:dana|uang)\s+dari\b/i,
+  /pembayaran\s+diterima/i,
   /dana\s+sebesar[\s\S]{0,60}telah\s+masuk/i,
+  /uang\s+sebesar[\s\S]{0,60}telah\s+masuk/i,
   /masuk\s+ke\s+rekening/i,
   /incoming\s+transfer/i,
   /you(?:'ve|\s+have)?\s+received/i,
@@ -102,7 +113,7 @@ const INCOME_PATTERNS: RegExp[] = [
   /pembayaran\s+bunga/i,
   /bunga\s+(harian|tabungan|deposito)/i,
   /interest\s+(credit|earned|paid)/i,
-  /cashback|refund|pengembalian\s+dana/i,
+  /cashback|refund|pengembalian\s+(?:dana|uang)/i,
   /pencairan\s+deposito/i,
   /top[\s-]*up\s+(saldo\s+)?seabank\s+berhasil/i,
   /isi\s+saldo\s+seabank\s+berhasil/i,
@@ -118,25 +129,36 @@ const EXPENSE_PATTERNS: RegExp[] = [
   /transaksi\s+qris/i,
   /\bqris\b/i,
   /transfer\s+keluar/i,
+  /transfer\s+(?:dana\s+|uang\s+)?(?:ke|kepada|untuk)\b/i,
+  /kirim\s+(?:uang|dana)/i,
+  /mentransfer\b/i,
   /pengiriman\s+dana/i,
   /dana\s+keluar/i,
   /outgoing\s+transfer/i,
-  /top[\s-]*up\s+(e-?wallet|gopay|ovo|dana|shopeepay|linkaja|flazz|e-?money)/i,
-  /pembayaran\s+(berhasil|tagihan|virtual\s+account|va|merchant|shopee|sebesar|rp)/i,
-  /pembelian\s+(berhasil|pulsa|paket\s+data|token|listrik)/i,
-  /bayar\s+(tagihan|merchant|belanja|qris)/i,
+  /(?:top[\s-]*up|isi\s+saldo)\s+(?:ke\s+|untuk\s+)?(?:e-?wallet|gopay|ovo|dana|shopeepay|spay|linkaja|flazz|e-?money|emoney|brizzi|tapcash)/i,
+  /pembayaran\s+(berhasil|tagihan|virtual\s+account|va|merchant|shopee|pesanan|sebesar|rp)/i,
+  /pembayaran\b[\s\S]{0,80}\b(?:berhasil|sukses)/i,
+  /pembelian\s+(berhasil|pulsa|paket\s+data|token|listrik|pln)/i,
+  /pembelian\b[\s\S]{0,80}\b(?:berhasil|sukses)/i,
+  /bayar\s+(tagihan|merchant|belanja|qris|shopee|va|virtual\s+account|listrik|pln|pdam|bpjs|pulsa)/i,
   /payment\s+successful/i,
   /tarik\s+tunai/i,
+  /penarikan\s+(?:dana|saldo|tunai)/i,
   /debit\s+(transaksi|otomatis|berhasil|notification)/i,
+  /auto[\s-]*deb[ei]t/i,
   /biaya\s+(admin|bulanan|materai)/i,
   /penempatan\s+deposito/i,
   /transfer\s+(dana\s+|sebesar\s+|rp\.?\s*)?berhasil/i,
+  /transfer\b[\s\S]{0,80}\b(?:berhasil|sukses|terkirim)/i,
   /bukti\s+transfer/i,
   /transaksi\s+berhasil/i,
-  /kamu\s+telah\s+(melakukan\s+)?(transfer|pembayaran|transaksi|membayar)/i,
+  /kamu\s+telah\s+(melakukan\s+)?(transfer|pembayaran|transaksi|membayar|mengirim)/i,
   /telah\s+dikirim\s+ke/i,
   /berhasil\s+dikirim\s+ke/i,
   /berhasil\s+dibayar\s+ke/i,
+  /rekening(?:mu| anda)?\s+berkurang/i,
+  /saldo(?:mu| anda)?\s+berkurang/i,
+  /didebet\s+dari\s+rekening/i,
 ];
 
 function detectTransactionType(subject: string, body: string): TransactionType | null {
@@ -181,6 +203,7 @@ function extractPrimaryAmount(body: string): number | null {
     /(?:jumlah\s+(?:transaksi|transfer|pembayaran|dana|uang)?)\s*[:\-]?\s*(?:(?:Rp\.?|IDR)\s*)?([0-9][0-9.,]*)/i,
     /(?:amount|transaction\s+amount|transfer\s+amount)\s*[:\-]?\s*(?:(?:Rp\.?|IDR)\s*)?([0-9][0-9.,]*)/i,
     /(?:sebesar|senilai|sejumlah)\s+(?:(?:Rp\.?|IDR)\s*)?([0-9][0-9.,]*)/i,
+    /(?:menerima|bertambah|berkurang|mentransfer|membayar)\s+(?:(?:dana|uang|saldo|transfer)\s+)?(?:(?:Rp\.?|IDR)\s*)?([0-9][0-9.,]*)/i,
   ];
 
   for (const regex of prioritizedLabels) {
@@ -244,11 +267,11 @@ function extractCounterparty(body: string, type: TransactionType): string | null
     type === 'income'
       ? [
           /(?:dari|pengirim|nama\s+pengirim|sender|from)\s*[:\-]\s*([^\n]{2,80})/i,
-          /(?:menerima|transfer\s+masuk|dana\s+masuk|bertambah)[\s\S]{0,60}\bdari\s+([^\n.,]{2,100})/i,
+          /(?:menerima|transfer(?:\s+masuk|\s+diterima)?|dana\s+masuk|uang\s+masuk|kiriman\s+(?:dana|uang)|bertambah)[\s\S]{0,60}\bdari\s+([^\n.,]{2,100})/i,
         ]
       : [
           /(?:merchant|nama\s+merchant|penerima|nama\s+penerima|tujuan|ke\s+rekening|recipient|beneficiary)\s*[:\-]\s*([^\n]{2,80})/i,
-          /(?:pembayaran\s+qris|pembayaran|transfer)[\s\S]{0,40}\b(?:untuk|ke|di|kepada)\s+([^\n.,]{2,100})/i,
+          /(?:pembayaran\s+qris|pembayaran|transfer|kirim\s+(?:uang|dana)|top[\s-]*up|isi\s+saldo)[\s\S]{0,40}\b(?:untuk|ke|di|kepada)\s+([^\n.,]{2,100})/i,
         ];
 
   for (const pattern of patterns) {
@@ -425,8 +448,8 @@ export function parseSeaBankEmail(
 
   const type = detectTransactionType(email.subject, textBody);
   if (!type) {
-    // Cek juga non-transaksi di body jika tipe tidak terdeteksi
-    for (const ignorePattern of NON_TRANSACTION_PATTERNS) {
+    // Cek juga non-transaksi / promo di seluruh isi jika tipe transaksi tidak terdeteksi
+    for (const ignorePattern of [...NON_TRANSACTION_PATTERNS, ...PROMO_NON_TRANSACTION_PATTERNS]) {
       if (ignorePattern.test(fullContent)) {
         return {
           matched: false,
@@ -439,6 +462,18 @@ export function parseSeaBankEmail(
       matched: false,
       isSeaBankEmail: true,
       reason: 'Tidak dapat menentukan jenis transaksi (uang masuk atau uang keluar)',
+    };
+  }
+
+  // Jika subject murni promo/diskon dan bukan pembelian voucher/pembayaran berhasil, abaikan
+  if (
+    PROMO_NON_TRANSACTION_PATTERNS.some((p) => p.test(email.subject)) &&
+    !/\b(?:pembayaran|pembelian|transaksi|transfer)\b[\s\S]{0,40}\b(?:berhasil|sukses)\b/i.test(fullContent)
+  ) {
+    return {
+      matched: false,
+      isSeaBankEmail: true,
+      reason: 'Email non-transaksi / diabaikan (promo/diskon/voucher)',
     };
   }
 

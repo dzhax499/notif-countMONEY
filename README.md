@@ -130,11 +130,12 @@ Jika email Gmail SeaBank tidak masuk untuk transaksi di bawah Rp 100.000, Anda b
      - **Body Text:**
        ```json
        {
-         "title": "{not_title}",
-         "text": "{not_text}",
-         "bigText": "{not_sub_text}"
+         "title": "[not_title]",
+         "text": "[not_text]",
+         "bigText": "[not_sub_text]"
        }
        ```
+     *(Tip lebih stabil: gunakan tab **Query Params** untuk `title=[not_title]`, `text=[not_text]`, `bigText=[not_sub_text]` dengan URL-encode aktif, centang **Block next actions until complete**, naikkan **Timeout** ke 30 detik, dan simpan **HTTP return code** ke variabel integer `http_code` untuk auto-retry jika `http_code != 200`.)*
 5. Simpan Macro tersebut, lalu ketik **`/sumber`** di chat Bot Telegram Anda untuk mengatur tombol ON/OFF (**MacroDroid ON**, **Gmail ON/OFF**, atau **Keduanya**).
 
 ---
